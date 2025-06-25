@@ -56,12 +56,19 @@ const extractWebpageContent = async (url: string) => {
     const mainContent = $('main, article, .content, #content').first().text().trim().substring(0, 500) ||
                        $('body').text().trim().substring(0, 500);
 
+    // Extract domain for branding context
+    const domain = new URL(url).hostname.replace('www.', '');
+
     // Try to extract brand colors from CSS variables or common patterns
     const extractedColors: string[] = [];
     const styleContent = $('style').text();
     const colorMatches = styleContent.match(/#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}|rgb\([^)]+\)|rgba\([^)]+\)/g);
     if (colorMatches) {
-      extractedColors.push(...colorMatches.slice(0, 5));
+      // Filter out common colors and get unique ones
+      const uniqueColors = [...new Set(colorMatches)]
+        .filter(color => !['#000', '#fff', '#ffffff', '#000000', 'rgb(0,0,0)', 'rgb(255,255,255)'].includes(color.toLowerCase()))
+        .slice(0, 3);
+      extractedColors.push(...uniqueColors);
     }
 
     return {
@@ -69,7 +76,8 @@ const extractWebpageContent = async (url: string) => {
       description: description.substring(0, 200),
       keywords: keywords.slice(0, 10),
       mainContent,
-      extractedColors
+      extractedColors,
+      domain
     };
   } catch (error) {
     console.error('Error extracting webpage content:', error);
@@ -79,37 +87,49 @@ const extractWebpageContent = async (url: string) => {
 
 const generateBannerWithAI = async (content: any, template: string): Promise<string> => {
   const templateDescriptions = {
-    modern: 'Clean, professional design with subtle geometric elements, plenty of white space, and a sophisticated color palette',
-    minimal: 'Ultra-clean design with minimal elements, centered text, simple typography, and lots of white space',
-    gradient: 'Dynamic design with vibrant gradients, bold colors, and modern visual effects',
-    bold: 'Strong, impactful design with bold colors, large typography, and geometric shapes'
+    modern: 'Clean, professional design with subtle geometric elements, plenty of white space, and a sophisticated color palette. Use modern typography and minimal decorative elements.',
+    minimal: 'Ultra-clean design with minimal elements, centered text, simple typography, and lots of white space. Focus on typography hierarchy and negative space.',
+    gradient: 'Dynamic design with vibrant gradients, bold colors, and modern visual effects. Use smooth color transitions and contemporary styling.',
+    bold: 'Strong, impactful design with bold colors, large typography, and geometric shapes. Create high contrast and eye-catching elements.'
   };
 
-  const prompt = `Create a professional social media banner in SVG format (1200x630 pixels) based on the following webpage content:
+  const prompt = `Create a professional social media banner in SVG format (1200x630 pixels) to promote the following webpage:
 
-Title: ${content.title}
-Description: ${content.description}
-Keywords: ${content.keywords.join(', ')}
-${content.extractedColors.length > 0 ? `Suggested colors from site: ${content.extractedColors.join(', ')}` : ''}
+WEBPAGE CONTENT:
+- Original Title: ${content.title}
+- Description: ${content.description}
+- Domain: ${content.domain}
+- Keywords: ${content.keywords.join(', ')}
+${content.extractedColors.length > 0 ? `- Website Colors: ${content.extractedColors.join(', ')}` : ''}
 
-Template Style: ${template} - ${templateDescriptions[template as keyof typeof templateDescriptions]}
+DESIGN REQUIREMENTS:
+1. Template Style: ${template} - ${templateDescriptions[template as keyof typeof templateDescriptions]}
+2. Create compelling promotional text (don't copy the original title/description exactly)
+3. Generate a catchy headline and subtitle that would make people want to visit the website
+4. Use ONLY 2 main colors maximum (primary and secondary) plus white/black for text
+5. Ensure ALL text fits comfortably within the 1200x630 canvas with proper margins
+6. Use web-safe fonts (Arial, Helvetica, sans-serif)
+7. Include the domain name subtly in the design
+8. Make it look like a professional social media promotional banner
 
-Requirements:
-1. Create a complete, valid SVG with width="1200" height="630"
-2. Use the title and description provided
-3. Choose an appropriate color palette (you can use the suggested colors or create a harmonious palette)
-4. Follow the ${template} template style guidelines
-5. Ensure text is readable and well-positioned
-6. Include subtle design elements that enhance the overall look
-7. Make sure all text fits within the banner dimensions
-8. Use web-safe fonts like Arial, sans-serif
+TEXT GUIDELINES:
+- Create a compelling headline (not the exact page title)
+- Write an engaging subtitle/tagline
+- Keep text concise and readable
+- Ensure proper text hierarchy
+- Leave adequate margins (at least 60px from edges)
 
-Return ONLY the SVG code, no explanations or additional text.`;
+COLOR GUIDELINES:
+- Use maximum 2 main colors from the website or create a harmonious 2-color palette
+- Ensure high contrast for readability
+- Use colors strategically to guide attention
+
+Return ONLY the complete SVG code with proper viewBox and dimensions. No explanations.`;
 
   try {
     const response = await anthropic.messages.create({
       model: 'claude-3-sonnet-20240229',
-      max_tokens: 2000,
+      max_tokens: 3000,
       messages: [
         {
           role: 'user',
@@ -188,17 +208,20 @@ export const handler: Handler = async (event, context) => {
     // Extract webpage content
     const webpageContent = await extractWebpageContent(url);
 
-    // Generate color palette (fallback if no colors extracted)
-    const defaultColors = {
-      modern: ['#3B82F6', '#14B8A6', '#F97316', '#EF4444', '#8B5CF6'],
-      minimal: ['#1F2937', '#6B7280', '#9CA3AF', '#D1D5DB', '#F3F4F6'],
-      gradient: ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7'],
-      bold: ['#E74C3C', '#3498DB', '#2ECC71', '#F39C12', '#9B59B6']
+    // Generate simplified color palette (max 2 colors)
+    const defaultColorPalettes = {
+      modern: ['#3B82F6', '#64748B'],
+      minimal: ['#1F2937', '#9CA3AF'],
+      gradient: ['#6366F1', '#EC4899'],
+      bold: ['#EF4444', '#F59E0B']
     };
 
-    const colors = webpageContent.extractedColors.length > 0 
-      ? webpageContent.extractedColors.slice(0, 5)
-      : defaultColors[template];
+    let colors = defaultColorPalettes[template];
+    if (webpageContent.extractedColors.length >= 2) {
+      colors = webpageContent.extractedColors.slice(0, 2);
+    } else if (webpageContent.extractedColors.length === 1) {
+      colors = [webpageContent.extractedColors[0], defaultColorPalettes[template][1]];
+    }
 
     // Generate SVG banner using AI
     const svgContent = await generateBannerWithAI(webpageContent, template);
